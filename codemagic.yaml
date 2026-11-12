@@ -23,3 +23,55 @@ workflows:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  ios-testflight:
+    name: Imam Hatipliyiz - TestFlight IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: ImamHatipliyiz-Apple
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: tr.com.imamhatipliyiz.app
+      vars:
+        XCODE_PROJECT: ImamHatipliyiz.xcodeproj
+        XCODE_SCHEME: ImamHatipliyiz
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen
+      - name: Generate versioned Xcode project
+        script: |
+          # Codemagic assigns an increasing build number to each build.
+          # Generate a temporary spec without changing the committed project.yml.
+          python3 - <<'PY'
+          import os, pathlib, re
+          p = pathlib.Path('project.yml')
+          src = p.read_text(encoding='utf-8')
+          number = os.environ['CM_BUILD_NUMBER']
+          if not number.isdigit():
+              raise ValueError('Invalid build number')
+          updated, count = re.subn(r'(?m)^(\s*CURRENT_PROJECT_VERSION:\s*)\d+\s*$',
+                                   lambda m: m.group(1) + number, src)
+          if count != 1:
+              raise ValueError('Expected exactly one CURRENT_PROJECT_VERSION in project.yml')
+          pathlib.Path('project.testflight.yml').write_text(updated, encoding='utf-8')
+          PY
+          xcodegen generate --spec project.testflight.yml
+      - name: Apply App Store provisioning profile
+        script: |
+          xcode-project use-profiles
+      - name: Build signed IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false
