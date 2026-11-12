@@ -16,6 +16,7 @@ targets:
       - path: .
         includes:
           - '*.swift'
+      - path: Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tr.com.imamhatipliyiz.app
@@ -26,4 +27,4 @@ targets:
         MARKETING_VERSION: 0.7.0
         CURRENT_PROJECT_VERSION: 1
         CODE_SIGN_STYLE: Automatic
-        ASSETCATALOG_COMPILER_APPICON_NAME: ''
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

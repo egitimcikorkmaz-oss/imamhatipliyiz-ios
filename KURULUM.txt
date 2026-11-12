@@ -1,0 +1,9 @@
+İMAM HATİPLİYİZ iOS - APP ICON PAKETİ
+
+1) ZIP dosyasını Windows bilgisayarınızda açın.
+2) GitHub imamhatipliyiz-ios deposunun kök dizinine Swift dosyaları, project.yml, codemagic.yaml ve Assets.xcassets klasörünü yükleyin.
+3) GitHub web arayüzü klasör yüklemeyi desteklemiyorsa ZIP içindeki klasörü sürükleyip bırakın; dosyaların yollarını koruyun.
+4) Codemagic -> Start new build -> ios-simulator-check -> main.
+5) Başarılıysa bir sonraki aşama Apple imzalama ve TestFlight için ayrı workflow olacaktır.
+
+Not: Bu paket TestFlight IPA üretmez.
