@@ -1,3 +1,4 @@
+
 workflows:
   ios-simulator-check:
     name: Imam Hatipliyiz - Simulator build check
@@ -11,9 +12,11 @@ workflows:
       - name: Install XcodeGen
         script: |
           brew install xcodegen
+
       - name: Generate Xcode project
         script: |
           xcodegen generate --spec project.yml
+
       - name: Build for iOS Simulator (no signing)
         script: |
           xcodebuild -project "$XCODE_PROJECT" \
@@ -28,8 +31,10 @@ workflows:
     name: Imam Hatipliyiz - TestFlight IPA
     instance_type: mac_mini_m2
     max_build_duration: 120
+
     integrations:
       app_store_connect: ImamHatipliyiz-Apple
+
     environment:
       ios_signing:
         distribution_type: app_store
@@ -37,44 +42,77 @@ workflows:
       vars:
         XCODE_PROJECT: ImamHatipliyiz.xcodeproj
         XCODE_SCHEME: ImamHatipliyiz
+
     scripts:
       - name: Install XcodeGen
         script: |
           brew install xcodegen
+
       - name: Generate versioned Xcode project
-  script: |
-    python3 - <<'PY'
-    import os
-    from pathlib import Path
+        script: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
 
-    source = Path("project.yml")
-    target = Path("project.testflight.yml")
+          source = pathlib.Path("project.yml")
+          target = pathlib.Path("project.testflight.yml")
 
-    if not source.is_file():
-        raise SystemExit("HATA: project.yml bulunamadi.")
+          if not source.is_file():
+              raise SystemExit("project.yml bulunamadi")
 
-    content = source.read_text(encoding="utf-8")
-    build_number = os.environ.get("CM_BUILD_NUMBER", "1")
+          content = source.read_text(encoding="utf-8")
 
-    # Build number uygulama ayarlarinda kullaniliyorsa
-    # bu degiskenin degeri XcodeGen'e aktarilir.
-    target.write_text(content, encoding="utf-8")
-    print(f"Build number: {build_number}")
-    print(f"Olusturuldu: {target}")
-    PY
-    xcodegen generate --spec project.testflight.yml
+          build_number = os.environ.get(
+              "BUILD_NUMBER",
+              "1"
+          )
+
+          if not build_number.isdigit():
+              raise SystemExit("Gecersiz build number")
+
+          pattern = (
+              r"(?m)^(\s*CURRENT_PROJECT_VERSION:\s*)"
+              r"['\"]?\d+['\"]?\s*$"
+          )
+
+          updated, count = re.subn(
+              pattern,
+              lambda m: m.group(1) + build_number,
+              content
+          )
+
+          if count == 0:
+              raise SystemExit(
+                  "project.yml icinde "
+                  "CURRENT_PROJECT_VERSION bulunamadi"
+              )
+
+          target.write_text(
+              updated,
+              encoding="utf-8"
+          )
+
+          print("Build number:", build_number)
+          print("Project spec generated:", target)
+          PY
+
+          xcodegen generate --spec project.testflight.yml
 
       - name: Apply App Store provisioning profile
         script: |
           xcode-project use-profiles
+
       - name: Build signed IPA
         script: |
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME"
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+
     publishing:
       app_store_connect:
         auth: integration
