@@ -42,23 +42,28 @@ workflows:
         script: |
           brew install xcodegen
       - name: Generate versioned Xcode project
-        script: |
-          # Codemagic assigns an increasing build number to each build.
-          # Generate a temporary spec without changing the committed project.yml.
-          python3 - <<'PY'
-          import os, pathlib, re
-          p = pathlib.Path('project.yml')
-          src = p.read_text(encoding='utf-8')
-          number = os.environ['CM_BUILD_NUMBER']
-          if not number.isdigit():
-              raise ValueError('Invalid build number')
-          updated, count = re.subn(r'(?m)^(\s*CURRENT_PROJECT_VERSION:\s*)\d+\s*$',
-                                   lambda m: m.group(1) + number, src)
-          if count != 1:
-              raise ValueError('Expected exactly one CURRENT_PROJECT_VERSION in project.yml')
-          pathlib.Path('project.testflight.yml').write_text(updated, encoding='utf-8')
-          PY
-          xcodegen generate --spec project.testflight.yml
+  script: |
+    python3 - <<'PY'
+    import os
+    from pathlib import Path
+
+    source = Path("project.yml")
+    target = Path("project.testflight.yml")
+
+    if not source.is_file():
+        raise SystemExit("HATA: project.yml bulunamadi.")
+
+    content = source.read_text(encoding="utf-8")
+    build_number = os.environ.get("CM_BUILD_NUMBER", "1")
+
+    # Build number uygulama ayarlarinda kullaniliyorsa
+    # bu degiskenin degeri XcodeGen'e aktarilir.
+    target.write_text(content, encoding="utf-8")
+    print(f"Build number: {build_number}")
+    print(f"Olusturuldu: {target}")
+    PY
+    xcodegen generate --spec project.testflight.yml
+
       - name: Apply App Store provisioning profile
         script: |
           xcode-project use-profiles
