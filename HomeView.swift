@@ -6,6 +6,43 @@ struct PortalWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
+        // Hide only the website's duplicate fixed bottom navigation inside iOS.
+        // The native SwiftUI TabView remains visible and functional.
+        let script = #"""
+        (function () {
+          const expected = ['ana sayfa', 'hizmetler', 'katılım', 'ara', 'hesabım'];
+          const normalize = s => (s || '').toLocaleLowerCase('tr-TR').replace(/\s+/g, ' ').trim();
+          function hideDuplicateNavigation() {
+            const candidates = document.querySelectorAll('nav, [role="navigation"], footer, div, section');
+            for (const node of candidates) {
+              if (node.dataset && node.dataset.ihIosHiddenNav === '1') continue;
+              const text = normalize(node.innerText);
+              if (text.length > 180 || !expected.every(label => text.includes(label))) continue;
+              const rect = node.getBoundingClientRect();
+              const style = window.getComputedStyle(node);
+              if (rect.width < window.innerWidth * 0.65 || rect.height > 150 || rect.height < 35) continue;
+              if (!['fixed', 'sticky'].includes(style.position)) continue;
+              if (rect.bottom < window.innerHeight - 170) continue;
+              node.style.setProperty('display', 'none', 'important');
+              node.dataset.ihIosHiddenNav = '1';
+            }
+          }
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', hideDuplicateNavigation);
+          } else { hideDuplicateNavigation(); }
+          window.addEventListener('load', hideDuplicateNavigation);
+          let queued = false;
+          const observer = new MutationObserver(() => {
+            if (queued) return;
+            queued = true;
+            requestAnimationFrame(() => { queued = false; hideDuplicateNavigation(); });
+          });
+          observer.observe(document.documentElement, {childList: true, subtree: true});
+        })();
+        """#
+        config.userContentController.addUserScript(
+            WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        )
         let web = WKWebView(frame: .zero, configuration: config)
         web.allowsBackForwardNavigationGestures = true
         web.load(URLRequest(url: url))
@@ -50,13 +87,14 @@ struct HomeView: View {
                                 } else { serviceCard(service) }
                             }
                         }
-                        Text("Rehberlik ve öğrenci kayıtları için portal yetkilendirmesi gereklidir. Web oturumu iOS API oturumundan ayrıdır.").font(.caption).foregroundStyle(.secondary)
+                        
                         Text(status).font(.caption).foregroundStyle(.secondary)
                     }.padding()
-                }.navigationTitle("Ana Sayfa").task { await load() }
+                }.toolbar(.hidden, for: .navigationBar).task { await load() }
             }.tabItem { Label("Ana Sayfa", systemImage: "house") }
             NavigationStack {
-                PortalWebView(url: base).navigationTitle("Okul Portalı")
+                PortalWebView(url: base)
+                    .toolbar(.hidden, for: .navigationBar)
             }.tabItem { Label("Portal", systemImage: "square.grid.2x2") }
             NavigationStack {
                 StaffMessagesView()
@@ -81,6 +119,11 @@ struct HomeView: View {
         do {
             services = try await APIClient.shared.services().items
             status = "Üyelik mevcut portal üzerinden çalışır. Diğer modüller aşamalı olarak bağlanacak."
-        } catch { status = "API bağlantısı kurulamadı. Sunucu ve eklentiyi kontrol edin." }
+        } catch {
+            status = "Hizmet listesi şu anda yüklenemiyor. Portal sekmesinden hizmetlere ulaşabilirsiniz."
+            #if DEBUG
+            print("İmam Hatipliyiz services API error: \(error)")
+            #endif
+        }
     }
 }
