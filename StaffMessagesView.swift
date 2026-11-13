@@ -1,46 +1,53 @@
 import SwiftUI
+
+// Messaging is restricted by the server to approved school staff.
 struct StaffMessagesView: View {
-    @EnvironmentObject var session: SecureSession
-    @State private var peer = ""
-    @State private var bodyText = ""
-    @State private var messages: [MobileMessage] = []
+    @EnvironmentObject private var session: SecureSession
+    @State private var peerText = ""
+    @State private var draft = ""
+    @State private var items: [MobileMessage] = []
     @State private var notice = ""
+    @State private var busy = false
+    private var peer: Int? { Int(peerText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    private var isStaff: Bool { ["ogretmen", "yonetici"].contains(session.profile?.verified_role ?? "") }
+
     var body: some View {
         Group {
-            if session.profile == nil {
-                ContentUnavailableView("Üye girişi gerekli", systemImage: "lock.shield", description: Text("Mesajlar yalnızca okul tarafından doğrulanmış öğretmen ve yöneticilere açıktır."))
-            } else if !["ogretmen", "yonetici"].contains(session.profile?.verified_role ?? "") {
-                ContentUnavailableView("Kontrollü iletişim", systemImage: "shield", description: Text("Öğrenci ve veli mesajlaşması okul güvenliği kuralları tamamlanana kadar kapalıdır."))
+            if !session.loggedIn {
+                ContentUnavailableView("Giriş gerekli", systemImage: "lock", description: Text("Önce Profilim bölümünden web hesabınızla giriş yapın."))
+            } else if !isStaff {
+                ContentUnavailableView("Mesajlaşma yetkisi yok", systemImage: "person.crop.circle.badge.xmark", description: Text("Mesajlaşma yalnızca okul tarafından onaylanmış personel hesaplarına açıktır."))
             } else {
-                Form {
-                    Section("Alıcı") {
-                        TextField("Doğrulanmış personel üye numarası", text: $peer).keyboardType(.numberPad)
-                        Button("Konuşmayı görüntüle") { Task { await load() } }
-                    }
-                    Section("Mesajlar") {
-                        ForEach(messages) { msg in
-                            VStack(alignment: .leading) {
-                                Text(msg.sender_id == session.profile?.id ? "Ben" : "Diğer personel").font(.caption).foregroundStyle(.secondary)
-                                Text(msg.body)
-                            }
+                VStack(spacing: 12) {
+                    TextField("Alıcının üye numarası", text: $peerText).keyboardType(.numberPad).textFieldStyle(.roundedBorder)
+                    Button("Mesajları getir") { Task { await load() } }.disabled(peer == nil || busy)
+                    List(items) { message in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(message.sender_id == session.profile?.id ? "Ben" : "Üye #\(message.sender_id)").font(.caption).foregroundStyle(.secondary)
+                            Text(message.body)
                         }
                     }
-                    Section("Yeni mesaj") {
-                        TextField("Mesaj", text: $bodyText, axis: .vertical)
-                        Button("Gönder") { Task {
-                            guard let id = Int(peer) else { return }
-                            do { try await session.send(to: id, body: bodyText); bodyText = ""; await load() }
-                            catch { notice = error.localizedDescription }
-                        }}.disabled(bodyText.isEmpty || Int(peer) == nil)
+                    HStack {
+                        TextField("Mesajınız", text: $draft, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder)
+                        Button("Gönder") { Task { await send() } }.disabled(peer == nil || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
                     }
-                    if !notice.isEmpty { Text(notice).foregroundStyle(.red) }
-                }
+                    if !notice.isEmpty { Text(notice).font(.caption).foregroundStyle(.secondary) }
+                }.padding()
             }
-        }.navigationTitle("Personel Mesajları")
+        }
+        .navigationTitle("Mesajlar")
+        .task { await session.refresh() }
     }
-    private func load() async {
-        guard let id = Int(peer) else { return }
-        do { messages = try await session.messages(peer: id); notice = "" }
+    @MainActor private func load() async {
+        guard let peer else { return }; busy = true; defer { busy = false }
+        do { items = Array(try await session.messages(peer: peer).reversed()); notice = "" }
         catch { notice = error.localizedDescription }
+    }
+    @MainActor private func send() async {
+        guard let peer else { return }; busy = true; defer { busy = false }
+        do {
+            try await session.send(to: peer, body: draft.trimmingCharacters(in: .whitespacesAndNewlines))
+            draft = ""; items = Array(try await session.messages(peer: peer).reversed()); notice = ""
+        } catch { notice = error.localizedDescription }
     }
 }

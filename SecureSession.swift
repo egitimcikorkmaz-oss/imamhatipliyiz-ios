@@ -74,11 +74,14 @@ struct MobileMessagesResponse: Decodable { let items: [MobileMessage] }
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
-    func login(identity: String, password: String) async {
+    // The website is the single login UI. Never send WordPress passwords to native code.
+    func exchangeWebSession(code: String) async {
+        guard code.range(of: "^[a-f0-9]{48}$", options: .regularExpression) != nil else { return }
         isBusy = true; defer { isBusy = false }
         do {
-            let result: MobileLoginResponse = try await call("login", method: "POST", payload: ["identity": identity, "password": password], authorized: false)
+            let result: MobileLoginResponse = try await call("exchange", method: "POST", payload: ["code": code], authorized: false)
             save(result.token)
+            errorText = nil
             await refresh()
         } catch { errorText = error.localizedDescription }
     }
@@ -90,6 +93,7 @@ struct MobileMessagesResponse: Decodable { let items: [MobileMessage] }
     func logout() async {
         if token != nil { let _: [String: Bool]? = try? await call("logout", method: "POST") }
         clear()
+        await WebSessionStore.clearCookies()
     }
     func nativeRequests() async throws -> NativeRequestsResponse { try await call("requests-native") }
     func nativeCategories() async throws -> NativeCategoriesResponse { try await call("request-categories") }

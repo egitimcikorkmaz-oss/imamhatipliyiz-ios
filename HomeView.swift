@@ -1,11 +1,33 @@
 import SwiftUI
 import WebKit
 
+@MainActor enum WebSessionStore {
+    static func clearCookies() async {
+        let store = WKWebsiteDataStore.default()
+        let types: Set<String> = [WKWebsiteDataTypeCookies, WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeLocalStorage]
+        await withCheckedContinuation { continuation in
+            store.removeData(ofTypes: types, modifiedSince: .distantPast) { continuation.resume() }
+        }
+    }
+}
+
+
 struct PortalWebView: UIViewRepresentable {
     let url: URL
+    @ObservedObject var session: SecureSession
+    final class Coordinator: NSObject, WKScriptMessageHandler {
+        weak var session: SecureSession?
+        init(session: SecureSession) { self.session = session }
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == "imamhatipliyiz.com.tr", let code = message.body as? String else { return }
+            Task { @MainActor [weak self] in await self?.session?.exchangeWebSession(code: code) }
+        }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(session: session) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
+        config.userContentController.add(context.coordinator, name: "ihSession")
         // Hide only the website's duplicate fixed bottom navigation inside iOS.
         // The native SwiftUI TabView remains visible and functional.
         let script = #"""
@@ -43,7 +65,39 @@ struct PortalWebView: UIViewRepresentable {
         config.userContentController.addUserScript(
             WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         )
+        // Same-origin cookie authentication -> one-time code -> native Keychain.
+        // Never expose the native bearer token to JavaScript.
+        let bridge = #"""
+        (() => {
+          if (location.origin !== 'https://imamhatipliyiz.com.tr') return;
+          if (window.__ihBridgeStarted) return;
+          window.__ihBridgeStarted = true;
+          const root = '/wp-json/ih-ios/v1/';
+          async function sync() {
+            try {
+              const n = await fetch(root+'bridge-nonce', {credentials:'same-origin', cache:'no-store'});
+              if (!n.ok) return;
+              const nonce = (await n.json()).nonce;
+              if (!nonce) return;
+              const r = await fetch(root+'web-bridge', {
+                method:'POST', credentials:'same-origin', cache:'no-store',
+                headers:{'Content-Type':'application/json','X-IHM-CSRF':nonce},
+                body:'{}'
+              });
+              if (!r.ok) return;
+              const code = (await r.json()).code;
+              if (/^[a-f0-9]{48}$/.test(code || '')) window.webkit.messageHandlers.ihSession.postMessage(code);
+            } catch (_) {}
+          }
+          // The membership login reloads the page on success.
+          // One attempt per document, preventing repeated code generation.
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sync, {once:true});
+          else sync();
+        })();
+        """#
+        config.userContentController.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         let web = WKWebView(frame: .zero, configuration: config)
+        web.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 IH-iOS-App/1"
         web.allowsBackForwardNavigationGestures = true
         web.load(URLRequest(url: url))
         return web
@@ -60,47 +114,20 @@ struct HomeView: View {
     var body: some View {
         TabView {
             NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text("İmam Hatipliyiz").font(.largeTitle.bold())
-                            Text("Çayırova Kız Anadolu İmam Hatip Lisesi")
-                            Text("Yeniden İmam Hatip Ruhu ve Şuuru ile")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(22).foregroundStyle(.white)
-                        .background(Color(red: 0.06, green: 0.25, blue: 0.31), in: RoundedRectangle(cornerRadius: 20))
-                        Text("Dijital Okul Hizmetleri").font(.title2.bold())
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(services) { service in
-                                if service.id == "etkinlik" {
-                                    NavigationLink { SchoolEventsView() } label: { serviceCard(service) }
-                                } else if service.id == "basvur" {
-                                    NavigationLink { NativeRequestsView() } label: { serviceCard(service) }
-                                } else if service.status == "native_active" && service.id == "hadis" {
-                                    NavigationLink { WeeklyHadithView() } label: { serviceCard(service) }
-                                } else if service.status == "web_active", let path = service.path, !path.isEmpty,
-                                   let url = URL(string: path, relativeTo: base)?.absoluteURL {
-                                    NavigationLink {
-                                        PortalWebView(url: url).navigationTitle(service.title).navigationBarTitleDisplayMode(.inline)
-                                    } label: { serviceCard(service) }
-                                } else { serviceCard(service) }
-                            }
-                        }
-                        
-                        Text(status).font(.caption).foregroundStyle(.secondary)
-                    }.padding()
-                }.toolbar(.hidden, for: .navigationBar).task { await load() }
+                // Show the live WordPress homepage on app launch, rather than the
+                // native API-dependent service dashboard.
+                PortalWebView(url: base, session: session)
+                    .toolbar(.hidden, for: .navigationBar)
             }.tabItem { Label("Ana Sayfa", systemImage: "house") }
             NavigationStack {
-                PortalWebView(url: base)
+                PortalWebView(url: base, session: session)
                     .toolbar(.hidden, for: .navigationBar)
             }.tabItem { Label("Portal", systemImage: "square.grid.2x2") }
             NavigationStack {
                 StaffMessagesView()
             }.tabItem { Label("Mesajlar", systemImage: "message") }
             NavigationStack {
-                MemberLoginView()
+                NativeProfileView()
             }.tabItem { Label("Profilim", systemImage: "person.crop.circle") }
         }.tint(.teal)
     }

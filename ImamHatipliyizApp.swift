@@ -4,6 +4,6 @@ import SwiftUI
 struct ImamHatipliyizApp: App {
     @StateObject private var session = SecureSession()
     var body: some Scene {
-        WindowGroup { HomeView().environmentObject(session) }
+        WindowGroup { HomeView().environmentObject(session).task { await session.refresh() } }
     }
 }
